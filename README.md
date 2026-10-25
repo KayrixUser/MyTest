@@ -1,54 +1,43 @@
 USE [C2S];
 GO
 
-;WITH RankedNew AS (
+;WITH ColumnMetadata AS (
     SELECT
-        A.HOSTNAME,
-        A.LAST_SCANNED,
-        A.TOTAL_OPEN,
-        A.OPEN_30_DAYS_PAST_SLA,
-        ROW_NUMBER() OVER (
-            PARTITION BY A.HOSTNAME
-            ORDER BY A.LAST_SCANNED DESC
-        ) AS rn
-    FROM ACP_Connection.dbo.C2S_CATO_SUMMARY_DATA A
-    INNER JOIN dbo.ArcherMetricsHardwareBaseTable B
-        ON B.HostNameFirstPartHW = A.HOSTNAME
-),
-MetricDifferences AS (
+        N'Existing view' AS Source,
+        c.name COLLATE DATABASE_DEFAULT AS ColumnName,
+        t.name COLLATE DATABASE_DEFAULT AS SqlType,
+        c.max_length AS LengthBytes,
+        c.precision AS [Precision],
+        c.scale AS Scale,
+        c.is_nullable AS IsNullable,
+        c.collation_name COLLATE DATABASE_DEFAULT AS Collation
+    FROM sys.columns c
+    INNER JOIN sys.types t
+        ON t.user_type_id = c.user_type_id
+    WHERE c.object_id = OBJECT_ID(N'dbo.C2S_TLS_Assets', N'V')
+
+    UNION ALL
+
     SELECT
-        O.[Hostname],
-        CASE
-            WHEN O.[Last Scanned] IS NULL
-                 AND N.LAST_SCANNED IS NULL THEN 'Both NULL'
-            WHEN O.[Last Scanned] = N.LAST_SCANNED THEN 'Same'
-            ELSE 'Different'
-        END AS ScanComparison,
-        O.[Last Scanned] AS OldLastScanned,
-        N.LAST_SCANNED AS NewLastScanned,
-        O.[TotalOpen] AS OldTotalOpen,
-        N.TOTAL_OPEN AS NewTotalOpen,
-        O.[Open 30 Days Past SLA] AS OldOpen30Days,
-        N.OPEN_30_DAYS_PAST_SLA AS NewOpen30Days
-    FROM dbo.view_c2sreport_tbl_cATO O
-    INNER JOIN RankedNew N
-        ON O.[Hostname] = N.HOSTNAME AND N.rn = 1
-    WHERE EXISTS (
-        SELECT
-            CAST(O.[TotalOpen] AS float),
-            CAST(O.[Open 30 Days Past SLA] AS float)
-        EXCEPT
-        SELECT
-            CAST(N.TOTAL_OPEN AS float),
-            CAST(N.OPEN_30_DAYS_PAST_SLA AS float)
-    )
+        N'Landing table',
+        c.name COLLATE DATABASE_DEFAULT,
+        t.name COLLATE DATABASE_DEFAULT,
+        c.max_length,
+        c.precision,
+        c.scale,
+        c.is_nullable,
+        c.collation_name COLLATE DATABASE_DEFAULT
+    FROM ACP_Connection.sys.columns c
+    INNER JOIN ACP_Connection.sys.types t
+        ON t.user_type_id = c.user_type_id
+    WHERE c.object_id =
+          OBJECT_ID(N'ACP_Connection.dbo.C2S_TLS_ASSETS_DATA', N'U')
+      AND UPPER(c.name COLLATE DATABASE_DEFAULT) IN (
+          N'HOSTNAME', N'FQDN', N'BUSINESS_UNIT', N'SAPS',
+          N'TITLE', N'DESCRIPTION', N'FIRST_SEEN_UTC',
+          N'RISK_SCORE', N'SLA_UTC', N'SEVERITY', N'IS_EXTERNAL'
+      )
 )
-SELECT TOP (25) *
-FROM MetricDifferences
-ORDER BY
-    CASE ScanComparison
-        WHEN 'Same' THEN 0
-        WHEN 'Both NULL' THEN 1
-        ELSE 2
-    END,
-    Hostname;
+SELECT *
+FROM ColumnMetadata
+ORDER BY UPPER(ColumnName), Source;

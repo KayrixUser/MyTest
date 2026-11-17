@@ -1,26 +1,22 @@
-Authorization Package UAT	Prepared 17-Nov-2026
-SQL source	ACP_Connection.dbo.ArcherMetrics_AuthorizationPackage_PROD_All
-Snowflake source	RTX_ENTERPRISESERVICES.ES_ESC_GRC_PUBLISHED.C2S_AUTHORIZATION_PACKAGE_ALL
-Record match	Content_ID to ARCHER_CONTENT_AUTHORIZATION_PACKAGE_CONTENT_ID
-Business identifier	SAP_ID_RTN; SAP_ID is a separate field
-Existing result date	16-Nov-2026; reuse completed results
+**Authorization Package UAT**
 
-ID	Validation	Acceptance criteria	Recorded result / evidence needed	Status
-AP01	Refresh alignment	Compare the same source cutoff, or account for timing differences.	Load times and source cutoff not yet confirmed.	Pending
-AP02	Required fields	Resolve every required mapping and all missing-field gaps.	68 SQL fields; 74 SF outputs; 59 candidates; 9 fields missing (note below).	Open
-AP03	Population counts	Explain and reconcile every population difference.	Rows: SQL 4,126 / SF 4,872. Distinct Content_ID and SAP_ID_RTN, each: SQL 4,125 / SF 4,872.	Open
-AP04	Missing identifiers	Zero null or blank Content_ID and SAP_ID_RTN values.	Both fields: SQL and SF null = 0; blank = 0.	Pass
-AP05	Duplicate identifiers	One record per source identifier; investigate repeated keys.	Content_ID and SAP_ID_RTN each have SQL excess duplicates = 1; SF = 0. Inspect affected records.	Open
-AP06	Exact record matching	Reconcile SQL-only and SF-only IDs; verify Content_ID-to-SAP_ID_RTN mapping.	ID sets and key associations not compared. Equal counts alone are insufficient.	Pending
-AP07	Field-value comparison	Compare all mapped fields across all matched unique records; explain every value/null difference.	Include package name, acronym, status, classification, connectivity, business, entity and flags. Field-level results pending.	Pending
-AP08	Roles and lookups	Preserve correct name/UID pairs, list members and unmatched-reference behavior.	SF role format is UID before name; SQL name parser expects name first. Role/lookup compatibility unresolved.	Open
-AP09	Dates and conversions	Preserve date meaning, precision and timezone; no conversion errors or text truncation.	Validate Last_Updated, ConfirmedInArcher, First_Published, ATOIATO_Date and ATOIATO_Expiration_Date; check target data types.	Pending
-AP10	Numeric measures	Preserve control counts and compliance meaning, scale and precision.	Validate _Compliant versus PCT_COMPLIANT and control-count fields; required missing fields remain open.	Pending
-AP11	Additional_Visibility	Raw and enriched visibility values represent the intended visibility source.	Reviewed SF raw expression uses ALTERNATE_SYSTEM_ADMINISTRATOR_SA. Correction and value verification remain open.	Open
-AP12	C2S behavior	Preserve status filters, role expansion and affected package relationships.	Validate main/AD outputs: exclude Decommissioned, retain NULL statuses; verify role rows and package joins.	Pending
-AP13	Controlled UAT refresh	Load the mapped data and refresh affected C2S outputs without unexplained loss, duplication or value changes.	Run after mapping fixes in a controlled UAT environment; reconcile loaded rows and affected dimension/fact outputs.	Pending
-AP14	Final acceptance	All applicable checks pass; required gaps and unexplained discrepancies are resolved.	Initial profiling recorded. Full data validation and migration acceptance remain open.	Open
+SQL source: `ACP_Connection.dbo.ArcherMetrics_AuthorizationPackage_PROD_All`  
+Snowflake source: `RTX_ENTERPRISESERVICES.ES_ESC_GRC_PUBLISHED.C2S_AUTHORIZATION_PACKAGE_ALL`  
+Existing test results: November 16, 2026.
 
-Missing SF fields	Alternate ISO raw/name/UID (3); Count_of_Controls; Baseline_Recommendation; Control_Set_Version_Number; Stub_Entry_RTN; SAP_Inactive; Authorization_Package_Source.
-Status definitions	Pass = criterion met in recorded evidence. Open = known finding. Pending = execution/evidence outstanding.
-Overall status	OPEN - further evidence and fixes required; no production cutover approved.
+| Test ID | Validation | Expected result | Current finding | Status |
+|---|---|---|---|---|
+| AP01 | Refresh timing | Compare equivalent source snapshots and explain timing differences. | Source cutoff and load times need confirmation. | Pending |
+| AP02 | Field mapping | All required fields have validated mappings. | 68 SQL fields, 74 SF outputs, 59 mapping candidates and 9 missing fields. | Open |
+| AP03 | Record counts | Reconcile differences in total records and distinct IDs. | Rows: SQL 4,126; SF 4,872. Distinct Content_ID and SAP_ID_RTN, each: SQL 4,125; SF 4,872. | Open |
+| AP04 | Null and blank IDs | No null or blank Content_ID or SAP_ID_RTN values. | Both fields have zero null and blank values in SQL and SF. | Pass |
+| AP05 | Duplicate IDs | One source record per identifier. | Content_ID and SAP_ID_RTN each have one excess duplicate row in SQL and none in SF. Affected records need inspection. | Open |
+| AP06 | Record matching | Identify records present on only one side and verify the Content_ID-to-SAP_ID_RTN relationship. | Actual ID sets and key relationships have not been compared. | Pending |
+| AP07 | Field values | Compare all mapped fields for every matched unique record and explain value or null differences. | Package details, status, classification, connectivity, business, entity and other mapped values need comparison. | Pending |
+| AP08 | Roles and lookups | Preserve names, UIDs, list members and handling of unmatched references. | SF role strings place UID before name; the SQL name parser expects name first. Compatibility needs resolution. | Open |
+| AP09 | Dates and data types | Preserve values without conversion errors, truncation or unintended date/time changes. | Validate source update dates, confirmation dates, first-published dates, ATO dates and target data types. | Pending |
+| AP10 | Numeric values | Preserve control counts and compliance meaning, scale and precision. | Validate control-count fields and the _Compliant-to-PCT_COMPLIANT mapping. | Pending |
+| AP11 | Additional_Visibility | Raw and enriched values use the intended visibility source. | The reviewed SF raw expression uses ALTERNATE_SYSTEM_ADMINISTRATOR_SA. Correction and validation remain open. | Open |
+| AP12 | C2S rules and relationships | Preserve status filtering, role expansion and package relationships. | Verify main/AD outputs, Decommissioned exclusion, NULL-status retention and affected package joins. | Pending |
+| AP13 | UAT load and refresh | Load the mapped data and refresh affected C2S outputs without unexplained loss, duplication or value changes. | Controlled UAT execution and output reconciliation are outstanding. | Pending |
+| AP14 | Final acceptance | Resolve required-field gaps and unexplained differences; complete all applicable checks. | Initial profiling is complete. Full data validation remains open. | Open |

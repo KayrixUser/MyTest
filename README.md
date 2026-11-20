@@ -1,14 +1,13 @@
-Test ID	Validation	Expected result	Current finding	Status
-HW01	Refresh timing	Compare data from the same refresh cycle.	The exports show different latest update dates. Confirm the source cutoffs and that Matillion finished before C2S started.	Pending
-HW02	Required fields and wireless fix	Both exports contain all 17 required fields, and wireless approval matches.	All 17 fields are present on both sides. Wireless approval matched on all 66,058 shared records. Both sides had a value on 58,696 and were blank on the rest.	Pass
-HW03	Hardware records included	Both systems include the same hardware records.	SQL Server had 66,196 records and Snowflake had 72,871. Of those, 66,058 appeared in both, 138 appeared only in SQL Server, and 6,813 appeared only in Snowflake.	Fail
-HW04	Missing IDs	Every record has a Content_ID and a Hardware_ID.	Neither export had a blank Content_ID or Hardware_ID.	Pass
-HW05	Repeated IDs	Each Content_ID and Hardware_ID appears once per export.	Neither export had a repeated Content_ID or Hardware_ID.	Pass
-HW06	Hardware ID format	The same hardware record has the expected Hardware_ID in both systems.	Hardware_ID differed on all 66,058 shared records. Snowflake adds the HW- prefix. Confirm which format C2S needs.	Fail
-HW07	Hardware details	Basic hardware details match for shared records.	Differences by field: hardware name 70, host name 67, internal IP address 3, MAC address 170, and type 11.	Fail
-HW08	Authorization package	The same hardware record is linked to the same package names.	Package names differed on 4,358 of the 66,058 shared records. Confirm which package links C2S should use.	Fail
-HW09	Hardware dates	Last_Updated and ConfirmedInArcher can be compared and match on shared records.	Last_Updated differed on all 66,058 shared records. The latest was Nov 19, 2026 at 17:18:00 in SQL Server and Nov 13, 2026 at 23:21:21 in Snowflake. Power Query could not read the SQL ConfirmedInArcher dates, so that field still needs a format check.	Fail
-HW10	Deviation approvals	Approval values match on shared hardware records.	Tanium differed on 98 records. The other six approval fields matched, including wireless.	Fail
-HW11	Derived host names	C2S produces the expected host names.	Check Archer_Asset_Name and HostNameFirstPartHW in the downstream C2S views.	Pending
-HW12	C2S hardware and package joins	C2S keeps the expected hardware records and package links after refresh.	The export comparison is complete. The downstream hardware views, dimHardware, and package joins still need a check.	Pending
-HW13	Overall Hardware UAT	Required checks pass or the remaining differences are explained and accepted.	The wireless issue is closed. Record counts, hardware IDs, field values, and downstream checks remain open for sign-off.	Fail
+Check	Test ID	Result	Evidence	Details or Action	Comments(Grady)
+Required fields available	HW01	Pass	All 17 required Hardware fields are present in both exports.	Field mapping is complete.	
+Total hardware records	HW02	Needs Review	SQL Server has 66,196 records. Snowflake has 72,871.	Snowflake has 6,675 more records overall. Confirm both exports use the same filters and data cutoff.	
+Same hardware in both files	HW03	Needs Review	66,058 hardware records appear in both files. 138 appear only in SQL Server and 6,813 appear only in Snowflake.	Review examples from each side and confirm which records C2S should include.	
+Missing or duplicate IDs	HW04	Pass	Both files have zero missing IDs and zero repeated IDs for Content_ID and Hardware_ID.	Each hardware record could be identified by its Content_ID.	
+Hardware_ID matches	HW05	Needs Review	Hardware_ID differs on all 66,058 shared records. The Snowflake view adds HW- to the ID.	Confirm the format C2S expects and check whether the IDs match after accounting for the prefix.	
+Hardware details	HW06	Needs Review	Differences on shared records: hardware name 70, host name 67, internal IP address 3, MAC address 170, and type 11.	Recheck examples using data from the same refresh cycle.	
+Authorization package matches	HW07	Needs Review	4,358 shared hardware records have different package names in the two files.	Check the linked packages for a few examples, including hardware linked to more than one package.	
+Latest hardware update	HW08	Needs Review	Latest Last_Updated in SQL Server was Nov 19, 2026 at 17:18:00. In Snowflake it was Nov 13, 2026 at 23:21:21. All 66,058 shared records had different update times.	Confirm when each source refreshed, then recheck this field on the same hardware records.	
+Confirmed in Archer date	HW09	Needs Review	Power Query could not read the SQL Server ConfirmedInArcher dates. The latest readable Snowflake value was Nov 16, 2026 at 02:07:43.	Check the SQL export date format and rerun this comparison.	
+Wireless approval fix	HW10	Pass	Wireless_Access_Point_Deviation_Approved matched on all 66,058 shared records. Both files had a value on 58,696 and were blank on the other 7,362.	Grady’s fix is verified. Close the missing-field item.	
+Other deviation approvals	HW11	Needs Review	Tanium approval differed on 98 shared records. Splunk, access, privileged access, password, and session approvals all matched.	Review the 98 Tanium differences.	
+Hardware UAT	HW12	Needs Review	Nov 20 export comparison complete. All required fields are present and the wireless fix passed.	Sign-off remains open for the differences above and the downstream C2S host-name and package-link checks.	

@@ -1,165 +1,195 @@
-Check	Test ID	Result	Evidence	Conclusion or action	Source
-Required fields available	AP02	✓ Pass	All 68 SQL fields have a matching column in the Snowflake view.	The original query skipped value checks for nine of these fields. Their columns were confirmed in the view.	Nov 19 view review
-Total packages	AP03a	✗ Fail	SQL Server has 4,142 packages. Snowflake has 4,872.	Snowflake has 730 more packages overall.	Nov 20 exports
-Same packages in both files	AP03b	✗ Fail	4,113 packages appear in both files. 29 appear only in SQL Server. 759 appear only in Snowflake.	Confirm which packages should be included using the same filters and data cutoff.	Nov 20 exports
-Missing IDs	AP04	✓ Pass	Zero missing Content_ID or SAP_ID_RTN values in either file.	Every package has both IDs.	Nov 20 exports
-Duplicate IDs	AP05	✓ Pass	Zero repeated Content_ID or SAP_ID_RTN values in either file.	Each ID appears once in its file.	Nov 20 exports
-SAP_ID_RTN matches	AP06	✓ Pass	All 4,113 packages found in both files have the same SAP_ID_RTN.	This check passed for every shared package.	Nov 20 exports
-Continuous monitoring	AP07	✗ Fail	Of the 4,113 shared packages, 1,279 have a monitoring value in SQL Server. None have a value in Snowflake.	Trace a package with a SQL value and confirm why the Snowflake value is empty.	Nov 20 exports
-Additional Visibility source	AP11	✓ Pass	The updated Snowflake view reads the package visibility field and uses the visibility lookup for names and IDs.	Grady’s mapping fix is confirmed and closed.	Nov 19 view definition
-SAP_ID matches	AP06b	✓ Pass	All 4,113 packages found in both files have the same SAP_ID.	This check passed for every shared package.	Nov 20 exports
-Authorization Package UAT	AP13	✗ Fail	November 20 comparison complete.	Sign-off is on hold for the package differences and missing monitoring values. Hardware testing can proceed.	Nov 20 UAT
+et
+    SqlFile = "C:\YourFolder\SQL Hardware.csv",
+    SnowflakeFile = "C:\YourFolder\Snowflake Hardware.csv",
 
+    // SQL PROD_All field, published Snowflake ALL field, comparison rule.
+    Fields = #table({"SQL", "SF", "Rule"}, {
+        {"Content_ID", "ARCHER_CONTENT_HARDWARE_CONTENT_ID", "Key"},
+        {"Wireless_Access_Point_Deviation_Approved", "WIRELESS_ACCESS_POINT_DEVIATION_APPROVED", "Text"},
+        {"Hardware_ID", "HARDWARE_ID", "Text"},
+        {"Hardware_Name", "HARDWARE_NAME", "Text"},
+        {"Host_Name", "HOST_NAME", "Text"},
+        {"Internal_IP_Address", "INTERNAL_IP_ADDRESS", "Text"},
+        {"MAC_Address", "MAC_ADDRESS", "Text"},
+        {"Type", "TYPE", "Text"},
+        {"Authorization_Package", "AUTHORIZATION_PACKAGE_NAME", "Package names"},
+        {"Last_Updated", "ARCHER_CONTENT_HARDWARE_LAST_UPDATED", "Date"},
+        {"ConfirmedInArcher", "ARCHER_CONTENT_HARDWARE_CONFIRMED_IN_ARCHER", "Date"},
+        {"Splunk_Deviation_Approved", "SPLUNK_DEVIATION_APPROVED", "Text"},
+        {"Tanium_Deviation_Approved", "TANIUM_DEVIATION_APPROVED", "Text"},
+        {"Access_Management_Deviation_Approved", "ACCESS_MANAGEMENT_DEVIATION_APPROVED", "Text"},
+        {"Privileged_Access_Management_Deviation_Approved", "PRIVILEGED_ACCESS_MANAGEMENT_DEVIATION_APPROVED", "Text"},
+        {"Password_Management_Deviation_Approved", "PASSWORD_MANAGEMENT_DEVIATION_APPROVED", "Text"},
+        {"Session_Control_Deviation_Approved", "SESSION_CONTROL_DEVIATION_APPROVED", "Text"}
+    }),
 
+    Clean = (v as nullable text) as nullable text =>
+        let s = if v = null then "" else Text.Trim(v)
+        in if List.Contains({"", "NULL", "(NULL)", "\N"}, Text.Upper(s)) then null else s,
 
+    ReadCsv = (path as text, sourceHeaders as list) as record =>
+        let
+            bytes = Binary.Buffer(File.Contents(path)),
+            bom = if Binary.Length(bytes) < 2 then "" else Binary.ToText(Binary.Range(bytes, 0, 2), BinaryEncoding.Hex),
+            enc = if Text.Upper(bom) = "FFFE" then 1200 else if Text.Upper(bom) = "FEFF" then 1201 else
+                let utf8 = try Text.FromBinary(bytes, 65001)
+                in if utf8[HasError] then 1252 else if Text.Contains(utf8[Value], Character.FromNumber(65533)) then 1252 else 65001,
+            csv = Csv.Document(bytes, [Delimiter = ",", Encoding = enc, QuoteStyle = QuoteStyle.Csv]),
+            headers = Table.TransformColumnNames(Table.PromoteHeaders(csv, [PromoteAllScalars = true]),
+                each Text.Upper(Text.Trim(Text.Replace(_, Character.FromNumber(65279), "")))),
+            missing = List.Difference(sourceHeaders, Table.ColumnNames(headers)),
+            selected = Table.SelectColumns(headers, sourceHeaders, MissingField.UseNull),
+            renamed = Table.RenameColumns(selected, List.Select(List.Zip({sourceHeaders, Fields[SQL]}), each _{0} <> _{1})),
+            cleaned = Table.TransformColumns(renamed, List.Transform(Fields[SQL], each {_, Clean, type nullable text}))
+        in [Data = Table.Buffer(cleaned), Missing = missing],
 
-// In the UAT workbook, fill in the two paths in UATFiles. Paste this whole file
-// into the Advanced Editor of one blank Excel Power Query, then load and refresh.
-// AuthorizationFields supplies the column mappings. UATChecks selects value checks.
-let
-Workbook = Excel.CurrentWorkbook(),
-Config = (name as text) as table => Workbook{[Name = name]}[Content],
-Header = (value as any) as text =>
-if value = null then "" else Text.Upper(Text.Trim(Text.Replace(Text.From(value), Character.FromNumber(65279), "")), "en-US"),
-Clean = (value as any) as nullable text =>
-let s = if value = null then "" else Text.Trim(Text.From(value))
-in if s = "" or List.Contains({"NULL", "\N"}, Text.Upper(s, "en-US")) then null else s,
-Files = Config("UATFiles"),
-FileRow = if Table.RowCount(Files) = 1 then Files{0} else error "Use one row in the UATFiles table.",
-Load = (path as nullable text) as table =>
-let
-cleanPath = if path = null then "" else Text.Trim(Text.Trim(path), """"),
-bytes = if cleanPath = "" then error "Fill in both file paths in UATFiles." else Binary.Buffer(File.Contents(cleanPath)),
-bom = if Binary.Length(bytes) < 2 then "" else Text.Upper(Binary.ToText(Binary.Range(bytes, 0, 2), BinaryEncoding.Hex)),
-encoding = if bom = "FFFE" then 1200 else if bom = "FEFF" then 1201 else
-let utf8 = try Text.FromBinary(bytes, 65001)
-in if utf8[HasError] then 1252 else if Text.Contains(utf8[Value], Character.FromNumber(65533)) then 1252 else 65001,
-csv = Csv.Document(bytes, [Delimiter = ",", Encoding = encoding, QuoteStyle = QuoteStyle.Csv]),
-headers = if Table.IsEmpty(csv) then error "The CSV is empty. Export with column headers."
-else List.Transform(Record.FieldValues(csv{0}), Header),
-valid = if List.Contains(headers, "") or List.Count(List.Distinct(headers)) <> List.Count(headers)
-then error "The CSV has an empty or duplicate header. Export again with unique column headers." else headers
+    Sql = ReadCsv(SqlFile, List.Transform(Fields[SQL], each Text.Upper(_))),
+    Sf = ReadCsv(SnowflakeFile, Fields[SF]),
+    SqlData = Sql[Data],
+    SfData = Sf[Data],
+    NSql = Table.RowCount(SqlData),
+    NSf = Table.RowCount(SfData),
+    BothHaveRows = NSql > 0 and NSf > 0,
+    HasField = (f as record) as logical =>
+        not List.Contains(Sql[Missing], Text.Upper(f[SQL])) and not List.Contains(Sf[Missing], f[SF]),
+    HasKey = HasField(Fields{0}),
+    HasHardware = HasField(Fields{[SQL = "Hardware_ID"]}),
+    Profiles = (t as table, col as text, n as text) as table =>
+        let one = Table.SelectColumns(t, {col}), populated = Table.SelectRows(one, each Record.Field(_, col) <> null)
+        in Table.Buffer(Table.Group(populated, {col}, {{n, each Table.RowCount(_), Int64.Type}})),
+    SqlKeys = Profiles(SqlData, "Content_ID", "SQLRows"),
+    SfKeys = Profiles(SfData, "Content_ID", "SFRows"),
+    SqlHw = Profiles(SqlData, "Hardware_ID", "SQLRows"),
+    SfHw = Profiles(SfData, "Hardware_ID", "SFRows"),
+
+    KeyJoin = Table.Join(SqlKeys, {"Content_ID"}, Table.RenameColumns(SfKeys, {{"Content_ID", "SfID"}}), {"SfID"}, JoinKind.FullOuter),
+    SqlOnly = Table.Buffer(Table.SelectRows(KeyJoin, each [SFRows] = null)),
+    SfOnly = Table.Buffer(Table.SelectRows(KeyJoin, each [SQLRows] = null)),
+    Shared = Table.SelectRows(KeyJoin, each [SFRows] <> null and [SQLRows] <> null),
+    UniqueKeys = Table.SelectColumns(Table.SelectRows(Shared, each [SQLRows] = 1 and [SFRows] = 1), {"Content_ID"}),
+    SqlMatched = Table.Join(Table.RenameColumns(UniqueKeys, {{"Content_ID", "JoinID"}}), {"JoinID"}, SqlData, {"Content_ID"}, JoinKind.Inner),
+    Pairs = Table.Buffer(Table.Join(SqlMatched, {"Content_ID"}, Table.PrefixColumns(SfData, "SF"), {"SF.Content_ID"}, JoinKind.Inner)),
+    NPairs = Table.RowCount(Pairs),
+    NShared = Table.RowCount(Shared),
+    NOnly = Table.RowCount(SqlOnly) + Table.RowCount(SfOnly),
+
+    Sample = (values as list) as text => Text.Combine(List.FirstN(values, 3), ", "),
+    Num = (n as number) as text => Number.ToText(n, "#,##0", "en-US"),
+    Row = (check as text, sql as any, sf as any, compared as nullable number, diff as nullable number, status as text, note as text) as list =>
+        {check, sql, sf, compared, diff, status, note},
+    Grade = (available as logical, ok as logical) as text => if not available then "Review" else if ok then "Pass" else "Fail",
+    SumCounts = (values as list) as number => List.Sum({0} & values),
+    KeyChecks = (label as text, a as table, b as table, available as logical) as list =>
+        let
+            na = Table.RowCount(a), nb = Table.RowCount(b),
+            rowsA = SumCounts(a[SQLRows]), rowsB = SumCounts(b[SFRows]),
+            ready = available and BothHaveRows,
+            repeatA = Table.SelectRows(a, each [SQLRows] > 1),
+            repeatB = Table.SelectRows(b, each [SFRows] > 1),
+            repeatNote = if not available then "Check the required headers."
+                else if rowsA = na and rowsB = nb then "Each populated ID occurs once in its file."
+                else "Repeated ID examples. SQL: " & Sample(Table.Column(repeatA, label)) & ". Snowflake: " & Sample(Table.Column(repeatB, label)) & "."
+        in {
+            Row(label & " - different IDs in each file", if available then na else null, if available then nb else null, null, null,
+                if available then "Info" else "Review", "Each populated ID counted once."),
+            Row(label & " - rows with a missing ID", if available then NSql - rowsA else null, if available then NSf - rowsB else null,
+                null, null, Grade(ready, rowsA = NSql and rowsB = NSf), "Expected zero on both sides."),
+            Row(label & " - extra rows with a repeated ID", if available then rowsA - na else null, if available then rowsB - nb else null,
+                null, null, Grade(ready, rowsA = na and rowsB = nb), repeatNote)
+        },
+    HeaderNote = (label as text, names as list) as text =>
+        label & (if List.IsEmpty(names) then " complete." else " missing: " & Text.Combine(names, ", ") & "."),
+    MappingOK = List.IsEmpty(Sql[Missing]) and List.IsEmpty(Sf[Missing]),
+    Wireless = Fields{[SQL = "Wireless_Access_Point_Deviation_Approved"]},
+    Core = {
+        Row("Required field headers", Table.RowCount(Fields) - List.Count(Sql[Missing]), Table.RowCount(Fields) - List.Count(Sf[Missing]), null, null,
+            if MappingOK then "Pass" else "Fail", HeaderNote("SQL", Sql[Missing]) & " " & HeaderNote("Snowflake", Sf[Missing])),
+        Row("Wireless approval field present", if List.Contains(Sql[Missing], Text.Upper(Wireless[SQL])) then "Missing" else "Present",
+            if List.Contains(Sf[Missing], Wireless[SF]) then "Missing" else "Present", null, null,
+            if HasField(Wireless) then "Pass" else "Fail", "The separate wireless value check uses matched hardware records."),
+        Row("Total hardware rows", NSql, NSf, null, Number.Abs(NSql - NSf), Grade(BothHaveRows, NSql = NSf), "All data rows in the two exports.")
+    } & KeyChecks("Content_ID", SqlKeys, SfKeys, HasKey) & KeyChecks("Hardware_ID", SqlHw, SfHw, HasHardware) & {
+        Row("Content_IDs found on one side only", if HasKey then Table.RowCount(SqlOnly) else null, if HasKey then Table.RowCount(SfOnly) else null,
+            if HasKey then NShared else null, if HasKey then NOnly else null, Grade(HasKey and BothHaveRows, NOnly = 0),
+            if not HasKey then "Content_ID header missing. Compare again with both keys present." else
+            "Compared = IDs in both. SQL-only examples: " & Sample(SqlOnly[Content_ID]) & ". Snowflake-only examples: " & Sample(SfOnly[SfID]) & "."),
+        Row("Records used for field checks", null, null, NPairs, NShared - NPairs, Grade(HasKey and NPairs > 0, NShared = NPairs),
+            "One row per shared Content_ID on each side. Repeated shared IDs are excluded.")
+    },
+
+    // Preserve case and ID prefixes. Compare package name lists without relying on their order.
+    PackageNames = (s as text) as list => List.Sort(List.Transform(Text.Split(s, ";"), each Text.Trim(_)), Comparer.Ordinal),
+    // Both source fields are timezone-free. A zoned or unreadable value needs review.
+    AsDate = (s as nullable text) as nullable datetime =>
+        if s = null then null else
+        let
+            tail = if Text.Length(s) > 10 then Text.Range(s, 10) else "",
+            zoned = Text.EndsWith(Text.Upper(s), "Z") or Text.Contains(tail, "+") or Text.Contains(tail, "-"),
+            value = if zoned then null else try DateTime.FromText(s, [Culture = "en-US"]) otherwise null
+        in value,
+    DateTables = (t as table) as table => Table.Buffer(Table.TransformColumns(Table.SelectColumns(t, {"Last_Updated", "ConfirmedInArcher"}),
+        {{"Last_Updated", AsDate, type nullable datetime}, {"ConfirmedInArcher", AsDate, type nullable datetime}})),
+    LatestRow = (label as text, a as table, b as table) as list =>
+        let
+            parsedA = List.RemoveNulls(Table.Column(a, label)), parsedB = List.RemoveNulls(Table.Column(b, label)),
+            badA = List.NonNullCount(Table.Column(SqlData, label)) - List.Count(parsedA),
+            badB = List.NonNullCount(Table.Column(SfData, label)) - List.Count(parsedB),
+            fmt = (v as list) as nullable text => if List.IsEmpty(v) then null else DateTime.ToText(List.Max(v), [Format = "yyyy-MM-dd HH:mm:ss.fffffff", Culture = "en-US"]),
+            ready = not List.IsEmpty(parsedA) and not List.IsEmpty(parsedB) and badA + badB = 0
+        in Row("Latest " & label, fmt(parsedA), fmt(parsedB), null, null, if ready then "Info" else "Review",
+            "Latest readable value across each full file. Unreadable populated dates: SQL " & Num(badA) & ", Snowflake " & Num(badB) & "."),
+    SqlDates = DateTables(SqlData), SfDates = DateTables(SfData),
+
+    CompareField = (f as record) as list =>
+        let
+            name = f[SQL], sfName = "SF." & name,
+            columns = Table.RenameColumns(Table.SelectColumns(Pairs, {"Content_ID", name, sfName}), {{name, "A"}, {sfName, "B"}}),
+            judged = Table.Buffer(Table.AddColumn(columns, "Result", each
+                let a = [A], b = [B] in
+                if a = null and b = null then "Both blank"
+                else if a = null or b = null then "Different"
+                else if f[Rule] = "Date" then
+                    let da = AsDate(a), db = AsDate(b)
+                    in if da = null or db = null then "Unreadable" else if da = db then "Same" else "Different"
+                else if f[Rule] = "Package names" then
+                    if PackageNames(a) = PackageNames(b) then "Same" else "Different"
+                else if a = b then "Same" else "Different", type text)),
+            issues = Table.SelectRows(judged, each [Result] = "Different" or [Result] = "Unreadable"),
+            mismatches = Table.RowCount(Table.SelectRows(issues, each [Result] = "Different")),
+            unreadable = Table.RowCount(issues) - mismatches,
+            popA = List.NonNullCount(judged[A]), popB = List.NonNullCount(judged[B]),
+            ready = HasKey and HasField(f) and NPairs > 0,
+            note = if not HasField(f) then "Required header missing. See the field-header check."
+                else if not HasKey or NPairs = 0 then "No unique shared Content_IDs available."
+                else if popA + popB = 0 then "Every matched row is blank on both sides. Confirm whether this is expected."
+                else (if f[Rule] = "Package names" then "SQL package vs. Snowflake resolved names. " else "")
+                    & (if unreadable > 0 then Num(unreadable) & " date pairs also need review. " else "")
+                    & (if Table.IsEmpty(issues) then "Populated values match." else "Example Content_IDs: " & Sample(issues[Content_ID]) & "."),
+            status = if not ready then "Review" else if mismatches > 0 then "Fail" else if unreadable > 0 or popA + popB = 0 then "Review" else "Pass"
+        in Row(name, if ready then popA else null, if ready then popB else null, if ready then NPairs else null,
+            if ready then mismatches else null, status, note),
+    PrefixIssues = (t as table) as number => Table.RowCount(Table.SelectRows(t, each [Hardware_ID] <> null and
+        (not Text.StartsWith([Hardware_ID], "HW-") or Text.StartsWith([Hardware_ID], "HW-HW-")))),
+    PrefixSql = PrefixIssues(SqlData), PrefixSf = PrefixIssues(SfData),
+    Prefix = Row("Hardware_ID prefix exceptions", if HasHardware then PrefixSql else null, if HasHardware then PrefixSf else null, null, null,
+        if not HasHardware or not BothHaveRows or PrefixSql + PrefixSf > 0 then "Review" else "Info",
+        "Populated IDs missing the HW- prefix or starting HW-HW-. Confirm the expected format if any appear."),
+    Values = List.Transform(Table.ToRecords(Table.SelectRows(Fields, each [Rule] <> "Key")), CompareField),
+    Checked = List.Buffer(Core & {Prefix, LatestRow("Last_Updated", SqlDates, SfDates), LatestRow("ConfirmedInArcher", SqlDates, SfDates)} & Values),
+    Result = if List.AnyTrue(List.Transform(Checked, each _{5} = "Fail")) then "Fail"
+        else if List.AnyTrue(List.Transform(Checked, each _{5} = "Review")) then "Review" else "Pass",
+    OutsideExports = {
+        Row("HW01 - refresh timing", null, null, null, null, "Check separately", "Use both source cutoffs and the run log to confirm Matillion finished before C2S started."),
+        Row("HW11 - derived host names", null, null, null, null, "Check separately", "Verify Archer_Asset_Name and HostNameFirstPartHW in their downstream C2S views."),
+        Row("HW08 / HW12 - C2S outputs and package joins", null, null, null, null, "Check separately", "Verify package filters and joins, including hardware linked to multiple packages. Check the affected C2S views and dimHardware.")
+    },
+    Summary = #table({"Check", "SQL Server", "Snowflake", "Compared", "Differences", "Status", "Notes or example Content_IDs"},
+        {Row("Hardware export comparison", null, null, null, null, Result, "Field rows show populated values in the matched records. See the last three rows for downstream sign-off.")} & Checked & OutsideExports),
+
+    // Optional: duplicate this query and change the final word Summary to UnmatchedIDs for the complete list.
+    UnmatchedIDs = if not HasKey then error "Both Content_ID headers are required. See Summary." else Table.Sort(Table.Combine({
+        Table.AddColumn(Table.SelectColumns(SqlOnly, {"Content_ID"}), "Found in", each "SQL Server only", type text),
+        Table.AddColumn(Table.RenameColumns(Table.SelectColumns(SfOnly, {"SfID"}), {{"SfID", "Content_ID"}}), "Found in", each "Snowflake only", type text)
+    }), {{"Found in", Order.Ascending}, {"Content_ID", Order.Ascending}})
 in
-Table.Buffer(Table.FromColumns(Table.ToColumns(Table.Skip(csv, 1)), valid)),
-Sql = Load(FileRow[SQLFile]),
-Sf = Load(FileRow[SnowflakeFile]),
-SqlHeaders = List.Buffer(Table.ColumnNames(Sql)),
-SfHeaders = List.Buffer(Table.ColumnNames(Sf)),
-MapRows = List.Transform(Table.ToRecords(Config("AuthorizationFields")),
-each [Field = Header([SQL field]), Target = Header([Snowflake field or candidate])]),
-Fields = List.Transform(MapRows, each [Field]),
-Mapping = if List.IsEmpty(Fields) or List.Contains(Fields, "") or List.Count(Fields) <> List.Count(List.Distinct(Fields))
-then error "AuthorizationFields must list each SQL field once, with a nonblank name."
-else Record.FromList(List.Transform(MapRows, each [Target]), Fields),
-Options = List.Transform(Table.ToRecords(Config("UATChecks")),
-each [Field = Header([SQL field]), Mode = Header([Value check])]),
-Allowed = {"PACKAGE KEY", "KEY", "TEXT", "WHOLE NUMBER", "PRESENCE"},
-BadOptions = List.Select(Options, each not Record.HasFields(Mapping, [Field]) or not List.Contains(Allowed, [Mode])),
-Selected = List.Transform(Options, each [Field]),
-Rules = if not List.IsEmpty(BadOptions) then error "Check UATChecks for a field absent from AuthorizationFields or an unsupported Value check."
-else if List.Count(Selected) <> List.Count(List.Distinct(Selected)) then error "Use one UATChecks row per SQL field."
-else if List.Count(List.Select(Options, each [Mode] = "PACKAGE KEY")) <> 1 then error "Choose exactly one Package key in UATChecks."
-else Options,
-Keys = List.Select(Rules, each List.Contains({"PACKAGE KEY","KEY"}, [Mode])),
-MajorFields = List.Select(Rules, each [Mode] <> "PACKAGE KEY"),
-HasBoth = (field as text) as logical =>
-List.Contains(SqlHeaders, field) and List.Contains(SfHeaders, Record.Field(Mapping, field)),
-// Only the selected value columns are needed to profile keys and pair records.
-Project = (source as table, isSql as logical) as table =>
-let
-rulesHere = List.Select(Rules, each HasBoth([Field])),
-logicalNames = List.Transform(rulesHere, each [Field]),
-values = List.Transform(logicalNames, (f) =>
-List.Transform(Table.Column(source, if isSql then f else Record.Field(Mapping, f)), Clean))
-in Table.Buffer(Table.FromColumns(values, logicalNames)),
-SqlValues = Project(Sql, true),
-SfValues = Project(Sf, false),
-SqlTotal = Table.RowCount(Sql),
-SfTotal = Table.RowCount(Sf),
-HaveRows = SqlTotal > 0 and SfTotal > 0,
-Result = (label as text, sql as nullable number, sf as nullable number, compared as nullable number,
-diff as nullable number, tested as logical, note as text) as record =>
-[Check = label, SQL = sql, Snowflake = sf, Compared = compared, Differences = diff,
-Result = if not tested or diff = null then "— Not tested" else if diff = 0 then "✓ Pass" else "✗ Fail", Notes = note],
-MissingSql = List.Select(Fields, each not List.Contains(SqlHeaders, )),
-MissingSf = List.Select(Fields, each not List.Contains(SfHeaders, Record.Field(Mapping, ))),
-MissingEither = List.Union({MissingSql, MissingSf}),
-MissingNotes = Text.Combine(List.RemoveNulls({
-if List.IsEmpty(MissingSql) then null else "SQL missing: " & Text.Combine(MissingSql, ", "),
-if List.IsEmpty(MissingSf) then null else "Snowflake mapping missing for: " & Text.Combine(MissingSf, ", ")
-}), " | "),
-Schema = Result("Mapped fields present", List.Count(Fields)-List.Count(MissingSql),
-List.Count(Fields)-List.Count(MissingSf), List.Count(Fields), List.Count(MissingEither), true,
-if MissingNotes = "" then "All mapped fields are present in the exports." else MissingNotes),
-Rows = Result("Export rows", SqlTotal, SfTotal, null, Number.Abs(SqlTotal-SfTotal),
-SqlTotal+SfTotal > 0, "Counts every CSV data row, excluding the header."),
-Groups = (data as table, field as text) as table =>
-let
-present = Table.SelectRows(data, each Record.Field(, field) <> null),
-groups = Table.Group(present, {field}, {
-{"Count", each Table.RowCount(), Int64.Type},
-{"First", each Table.First(), type record}
-})
-in Table.Buffer(Table.RenameColumns(groups, {{field, "JoinKey"}})),
-MakeProfile = (rule as record) as record =>
-let
-f = rule[Field],
-left = Groups(SqlValues, f),
-right = Groups(SfValues, f),
-pairs = Table.NestedJoin(left, {"JoinKey"}, right, {"JoinKey"}, "RightSide", JoinKind.Inner),
-both = Table.Buffer(Table.ExpandTableColumn(pairs, "RightSide", {"Count","First"}, {"RightCount","RightRecord"})),
-s = Table.RowCount(left), t = Table.RowCount(right), shared = Table.RowCount(both),
-sp = List.Sum({0} & left[Count]), tp = List.Sum({0} & right[Count]),
-checks = {
-Result(f & " / distinct populated IDs", s, t, shared, Number.Abs(s-t), HaveRows and s+t > 0, "Compared = shared distinct IDs. Differences = count gap."),
-Result(f & " / missing ID rows", SqlTotal-sp, SfTotal-tp, null, SqlTotal-sp+SfTotal-tp, HaveRows, "Blank, whitespace, NULL and backslash-N count as missing."),
-Result(f & " / excess duplicate rows", sp-s, tp-t, null, sp-s+tp-t, s > 0 and t > 0, "One excess row for each repeat after the first populated ID."),
-Result(f & " / IDs on one side only", s-shared, t-shared, shared, s+t-2*shared, HaveRows and s+t > 0, "SQL-only and Snowflake-only counts. Differences = total unmatched distinct IDs.")
-}
-in if HasBoth(f) then [Field = f, Pairs = both, Checks = checks]
-else [Field = f, Pairs = null, Checks = {Result(f & " / ID profile",null,null,null,null,false,"See mapped fields for the missing header.")}],
-Profiles = List.Buffer(List.Transform(Keys, MakeProfile)),
-PackageField = List.First(List.Select(Rules, each [Mode] = "PACKAGE KEY"))[Field],
-PackageProfile = List.First(List.Select(Profiles, each [Field] = PackageField)),
-Paired = if PackageProfile[Pairs] = null then {}
-else List.Buffer(Table.ToRecords(Table.SelectRows(PackageProfile[Pairs], each [Count]=1 and [RightCount]=1))),
-PairCount = List.Count(Paired),
-// Normalize nonnegative whole counts as strings so large integers retain precision.
-Whole = (s as text) as nullable text =>
-let
-unsigned = if Text.StartsWith(s,"+") then Text.Range(s,1) else s,
-parts = Text.Split(unsigned,"."), groups = Text.Split(parts{0},","),
-allDigits = (t as text) as logical => t <> "" and Text.Select(t, {"0".."9"}) = t,
-groupingOK = List.Count(groups)=1 or (Text.Length(groups{0})<=3 and List.AllTrue(List.Transform(List.Skip(groups), each Text.Length()=3))),
-intOK = groupingOK and List.AllTrue(List.Transform(groups,allDigits)),
-fracOK = List.Count(parts)=1 or (List.Count(parts)=2 and parts{1} <> "" and Text.Trim(parts{1},"0")=""),
-digits = Text.TrimStart(Text.Combine(groups,""),"0")
-in if not intOK or not fracOK then null else if digits="" then "0" else digits,
-Difference = (a as nullable text, b as nullable text, mode as text) as logical =>
-if mode = "KEY" and (a = null or b = null) then true
-else if a = null or b = null then a <> b
-else if mode = "PRESENCE" then false
-else if mode = "WHOLE NUMBER" then
-let x = Whole(a), y = Whole(b) in x = null or y = null or x <> y
-else if mode = "KEY" then a <> b
-else Text.Upper(a,"en-US") <> Text.Upper(b,"en-US"),
-CompareField = (rule as record) as record =>
-let
-f = rule[Field], mode = rule[Mode],
-pairs = List.Buffer(List.Transform(Paired, each {Record.Field([First], f), Record.Field([RightRecord], f)})),
-sp = List.Count(List.Select(pairs, each _{0} <> null)),
-tp = List.Count(List.Select(pairs, each {1} <> null)),
-d = List.Count(List.Select(pairs, each Difference({0}, _{1}, mode))),
-tested = PairCount > 0 and (sp+tp > 0 or mode = "KEY"),
-note = if PairCount = 0 then "No shared unique package IDs."
-else if not tested then "Both exports are empty for this field on all paired rows."
-else if mode = "PRESENCE" then "Checks populated versus missing on each paired package."
-else if mode = "WHOLE NUMBER" then "Compares whole control counts, including one-sided blanks."
-else if mode = "KEY" then "Compares populated identifiers exactly as text on paired packages."
-else "Compares trimmed text ignoring case. Equivalent missing markers match."
-in if not HasBoth(f) then Result(f & " / paired values",null,null,null,null,false,"Mapped header unavailable.")
-else Result(f & " / paired values",sp,tp,PairCount,if tested then d else null,tested,note),
-Results = {Schema, Rows} & List.Combine(List.Transform(Profiles, each [Checks])) & List.Transform(MajorFields, CompareField)
-in
-Table.FromRecords(Results, type table [Check=text, SQL=nullable number, Snowflake=nullable number,
-Compared=nullable number, Differences=nullable number, Result=text, Notes=text])
+    Summary
